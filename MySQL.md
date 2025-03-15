@@ -53,7 +53,7 @@ thread_cache_size = 64
 
 ⸻
 
-1.2 Quản lý Kết Nối và Hiệu Năng
+### 1.2 Quản lý Kết Nối và Hiệu Năng
 
 Tối ưu số lượng kết nối đồng thời
 ```ini
@@ -69,7 +69,7 @@ interactive_timeout = 300
 
 ⸻
 
-2. Tối ưu Hệ thống Lưu trữ (Storage Engine)
+# 2. Tối ưu Hệ thống Lưu trữ (Storage Engine)
 - Nên sử dụng InnoDB thay vì MyISAM:
 ```ini
 default_storage_engine = InnoDB
@@ -82,7 +82,7 @@ ALTER TABLE table_name ENGINE = InnoDB;
 
 ⸻
 
-3. Cải thiện hiệu suất truy vấn (SQL Performance)
+# 3. Cải thiện hiệu suất truy vấn (SQL Performance)
 
 Kiểm tra và tối ưu truy vấn bằng EXPLAIN
 ```sql
@@ -104,7 +104,7 @@ long_query_time = 2
 
 ⸻
 
-4. Tối ưu Bản ghi và Bảng
+# 4. Tối ưu Bản ghi và Bảng
 
 Giảm kích thước dữ liệu
 - Dùng TINYINT thay vì INT nếu giá trị nhỏ.
@@ -119,7 +119,7 @@ OPTIMIZE TABLE my_table;
 
 ⸻
 
-5. Cấu hình Replica (Replication)
+# 5. Cấu hình Replica (Replication)
 
 Cấu hình trên Master (my.cnf):
 ```ini
@@ -145,7 +145,7 @@ SHOW SLAVE STATUS \G;
 
 ⸻
 
-6. Giám sát và Bảo trì
+# 6. Giám sát và Bảo trì
 
 Công cụ giám sát hiệu suất
 - Percona Monitoring and Management (PMM)
@@ -154,7 +154,7 @@ Công cụ giám sát hiệu suất
 
 ⸻
 
-7. Backup & Restore
+# 7. Backup & Restore
 
 Backup với mysqldump
 ```bash
