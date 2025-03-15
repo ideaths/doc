@@ -428,25 +428,246 @@ replicate_wild_ignore_table = mydb.log%
   pmm-admin add mysql --username=pmm --password=password
   ```
 
-**2. Grafana + Prometheus + mysqld_exporter**
-- Cài đặt mysqld_exporter
-  ```bash
-  # Tạo user MySQL cho exporter
-  CREATE USER 'exporter'@'localhost' IDENTIFIED BY 'password';
-  GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'localhost';
-  
-  # Cài đặt exporter
-  wget https://github.com/prometheus/mysqld_exporter/releases/download/v0.14.0/mysqld_exporter-0.14.0.linux-amd64.tar.gz
-  tar xvf mysqld_exporter-0.14.0.linux-amd64.tar.gz
-  ```
+**2. Hệ thống giám sát Prometheus + Grafana**
 
-**Các metrics quan trọng cần giám sát:**
-1. **Lưu lượng truy vấn**: Queries per second (QPS)
-2. **Tỷ lệ cache hit**: Buffer pool hit ratio, Query cache hit ratio
-3. **Latency truy vấn**: Avg. query time, Slow queries
-4. **Kết nối**: Current/max connections
-5. **I/O**: IOPS, disk latency
-6. **Replication**: Replica lag
+#### Cài đặt và cấu hình MySQL Exporter
+
+1. **Tạo user MySQL cho exporter:**
+```sql
+CREATE USER 'exporter'@'localhost' IDENTIFIED BY 'strong_password';
+GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'localhost';
+GRANT SELECT ON performance_schema.* TO 'exporter'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+2. **Cài đặt mysqld_exporter:**
+```bash
+# Tải và cài đặt mysqld_exporter
+wget https://github.com/prometheus/mysqld_exporter/releases/download/v0.14.0/mysqld_exporter-0.14.0.linux-amd64.tar.gz
+tar xvf mysqld_exporter-0.14.0.linux-amd64.tar.gz
+cp mysqld_exporter-0.14.0.linux-amd64/mysqld_exporter /usr/local/bin/
+chmod +x /usr/local/bin/mysqld_exporter
+
+# Tạo file cấu hình
+cat > ~/.my.cnf << EOF
+[client]
+user=exporter
+password=strong_password
+EOF
+
+chmod 600 ~/.my.cnf
+```
+
+3. **Tạo service cho mysqld_exporter:**
+```bash
+cat > /etc/systemd/system/mysqld_exporter.service << EOF
+[Unit]
+Description=Prometheus MySQL Exporter
+After=network.target mysql.service
+
+[Service]
+User=prometheus
+ExecStart=/usr/local/bin/mysqld_exporter \
+  --config.my-cnf=~/.my.cnf \
+  --collect.global_status \
+  --collect.info_schema.innodb_metrics \
+  --collect.auto_increment.columns \
+  --collect.info_schema.processlist \
+  --collect.binlog_size \
+  --collect.info_schema.tablestats \
+  --collect.global_variables \
+  --collect.info_schema.query_response_time \
+  --collect.info_schema.userstats \
+  --collect.info_schema.tables \
+  --collect.perf_schema.tablelocks \
+  --collect.perf_schema.file_events \
+  --collect.perf_schema.eventswaits \
+  --collect.perf_schema.indexiowaits \
+  --collect.perf_schema.tableiowaits \
+  --web.listen-address=0.0.0.0:9104
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable mysqld_exporter
+systemctl start mysqld_exporter
+```
+
+#### Cài đặt Prometheus
+
+```bash
+# Tải và cài đặt Prometheus
+wget https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz
+tar xvf prometheus-2.45.0.linux-amd64.tar.gz
+cp prometheus-2.45.0.linux-amd64/{prometheus,promtool} /usr/local/bin/
+
+# Tạo thư mục cấu hình
+mkdir -p /etc/prometheus /var/lib/prometheus
+
+# Tạo file cấu hình
+cat > /etc/prometheus/prometheus.yml << EOF
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['localhost:9104']
+        labels:
+          instance: 'mysql_main'
+EOF
+
+# Tạo service cho Prometheus
+cat > /etc/systemd/system/prometheus.service << EOF
+[Unit]
+Description=Prometheus Time Series Collection and Processing Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+    --config.file /etc/prometheus/prometheus.yml \
+    --storage.tsdb.path /var/lib/prometheus/ \
+    --web.console.templates=/etc/prometheus/consoles \
+    --web.console.libraries=/etc/prometheus/console_libraries
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable prometheus
+systemctl start prometheus
+```
+
+#### Cài đặt và cấu hình Grafana
+
+```bash
+# Thêm repository Grafana
+cat > /etc/apt/sources.list.d/grafana.list << EOF
+deb https://packages.grafana.com/oss/deb stable main
+EOF
+wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+
+# Cài đặt Grafana
+apt-get update
+apt-get install -y grafana
+
+# Khởi động Grafana
+systemctl daemon-reload
+systemctl enable grafana-server
+systemctl start grafana-server
+```
+
+#### Tạo Dashboard MySQL trên Grafana
+
+1. **Truy cập Grafana**: http://your-server:3000 (mặc định: admin/admin)
+2. **Thêm Data Source**:
+   - Configuration > Data Sources > Add data source
+   - Chọn Prometheus
+   - URL: http://localhost:9090
+   - Lưu và Test
+
+3. **Import Dashboard có sẵn**:
+   - Dashboards > Import
+   - Nhập ID: 7362 (MySQL Overview) hoặc 7371 (MySQL InnoDB Metrics)
+   - Chọn Prometheus data source và Import
+
+#### Các Metrics MySQL quan trọng cần giám sát
+
+**1. Các metrics hiệu năng cơ bản:**
+```
+- mysql_global_status_questions (Tổng số queries)
+- mysql_global_status_threads_connected (Số kết nối hiện tại)
+- mysql_global_status_threads_running (Số thread đang chạy)
+- mysql_global_status_slow_queries (Số lượng slow queries)
+- mysql_global_status_queries (Queries per second)
+```
+
+**2. Metrics InnoDB quan trọng:**
+```
+- mysql_global_status_innodb_buffer_pool_read_requests (Tổng số read requests)
+- mysql_global_status_innodb_buffer_pool_reads (Số lần phải đọc từ đĩa)
+- mysql_global_status_innodb_row_lock_waits (Số lần phải chờ khóa hàng)
+- mysql_global_status_innodb_row_lock_time (Thời gian chờ khóa hàng)
+- mysql_global_status_innodb_data_writes (Số lượng write operations)
+```
+
+**3. Metrics Replication:**
+```
+- mysql_slave_status_seconds_behind_master (Replica lag)
+- mysql_slave_status_slave_io_running (IO Thread status)
+- mysql_slave_status_slave_sql_running (SQL Thread status)
+```
+
+#### Thiết lập Cảnh báo (Alerting)
+
+1. **Cảnh báo kết nối cao:**
+   - Metric: `mysql_global_status_threads_connected`
+   - Condition: > 80% của max_connections
+
+2. **Cảnh báo replica lag:**
+   - Metric: `mysql_slave_status_seconds_behind_master`
+   - Condition: > 300 seconds (5 phút)
+
+3. **Cảnh báo tỷ lệ Buffer Pool Hit thấp:**
+   - Expression: `100 * (1 - mysql_global_status_innodb_buffer_pool_reads / mysql_global_status_innodb_buffer_pool_read_requests)`
+   - Condition: < 95%
+
+4. **Cảnh báo đĩa đầy:**
+   - Metric: `node_filesystem_avail_bytes{mountpoint="/var/lib/mysql"}`
+   - Condition: < 10% dung lượng
+
+#### Những Metrics chính cần giám sát và thresholds khuyến nghị
+
+| Metric | Mô tả | Threshold cảnh báo | Threshold quan trọng |
+|--------|-------|-------------------|---------------------|
+| **Tổng quan hiệu năng** |||
+| QPS (Queries per second) | Số lượng truy vấn mỗi giây | Tăng/giảm đột biến >30% | Tăng/giảm đột biến >50% |
+| Connections | Số kết nối hiện tại | >80% max_connections | >90% max_connections |
+| Threads_running | Số lượng threads đang chạy | >30 | >50 |
+| **Cache & Bộ nhớ** |||
+| Buffer pool hit ratio | % truy vấn được đáp ứng từ bộ đệm | <98% | <95% |
+| Buffer pool utilization | Tỷ lệ sử dụng bộ đệm | >95% | >98% |
+| **Hoạt động I/O** |||
+| Innodb_data_writes | Ghi nhận hoạt động ghi | Tăng đột biến >30% | Tăng đột biến >50% |
+| Innodb_data_reads | Ghi nhận hoạt động đọc | Tăng đột biến >30% | Tăng đột biến >50% |
+| Disk Utilization | Mức sử dụng đĩa | >80% | >90% |
+| **Replication** |||
+| Seconds_Behind_Master | Độ trễ replica | >30 giây | >300 giây |
+| Slave_IO_Running | Trạng thái thread IO | Khác "Yes" | N/A |
+| Slave_SQL_Running | Trạng thái thread SQL | Khác "Yes" | N/A |
+| **Locks & Deadlocks** |||
+| Innodb_row_lock_waits | Số lần phải đợi khóa hàng | Tăng liên tục | >100/phút |
+| Deadlocks | Số deadlocks | >0 | >5/giờ |
+
+#### Biểu đồ quan trọng trên Grafana
+
+1. **MySQL Overview**:
+   - QPS & Connection Usage (2 trục)
+   - Innodb Buffer Pool (Free vs Used)
+   - MySQL Command Counters (Select, Insert, Update, Delete)
+   
+2. **MySQL Performance**:
+   - Slow Queries Rate
+   - Table Locks
+   - Buffer Pool Hit Ratio
+   - Top 5 Slow Queries (bảng)
+   
+3. **MySQL Replication**:
+   - Replica Lag (biểu đồ)
+   - Replication Status (panel)
+   - Binary Log Size Growth
 
 ### Bảo trì định kỳ
 
